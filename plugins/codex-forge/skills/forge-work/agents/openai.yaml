@@ -1,0 +1,4 @@
+interface:
+  display_name: "Forge Work"
+  short_description: "Issueまたは小規模な要求を調査・設計・実装する"
+  default_prompt: "Use $forge-work to implement this Issue or task."

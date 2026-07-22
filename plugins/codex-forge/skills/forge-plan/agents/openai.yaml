@@ -1,0 +1,4 @@
+interface:
+  display_name: "Forge Plan"
+  short_description: "設計を多観点で調査しGitHub Issueにまとめる"
+  default_prompt: "Use $forge-plan to design this request as a GitHub Issue."

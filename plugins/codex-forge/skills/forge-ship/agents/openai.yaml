@@ -1,0 +1,4 @@
+interface:
+  display_name: "Forge Ship"
+  short_description: "PR作成とレビュー指摘対応を検証しながら収束させる"
+  default_prompt: "Use $forge-ship to create or finish shipping this pull request."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Forge Finish"
+  short_description: "差分のdocs・テスト追随と収束型レビューを実行する"
+  default_prompt: "Use $forge-finish to finish and review the current branch."

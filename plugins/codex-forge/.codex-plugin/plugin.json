@@ -1,0 +1,35 @@
+{
+  "name": "codex-forge",
+  "version": "0.1.0",
+  "description": "A Codex-native development pipeline for planning issues, implementing changes, convergent review, and shipping pull requests.",
+  "author": {
+    "name": "k02miu",
+    "url": "https://github.com/k02miu"
+  },
+  "homepage": "https://github.com/k02miu/codex-forge",
+  "repository": "https://github.com/k02miu/codex-forge",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "development-workflow",
+    "code-review",
+    "github",
+    "pull-request"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Forge",
+    "shortDescription": "Plan, build, review, and ship changes with Codex.",
+    "longDescription": "Codex-native plan → work → finish → ship workflows with project profiles, stack-aware review perspectives, and convergent defect verification.",
+    "developerName": "k02miu",
+    "category": "DeveloperTools",
+    "capabilities": ["Read", "Write", "Multi-agent", "GitHub"],
+    "websiteURL": "https://github.com/k02miu/codex-forge",
+    "defaultPrompt": [
+      "Use $forge-plan to turn this request into an implementation-ready Issue.",
+      "Use $forge-work to implement this Issue or small task.",
+      "Use $forge-finish to finish and review the current branch."
+    ],
+    "brandColor": "#D97706"
+  }
+}
