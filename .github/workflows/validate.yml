@@ -15,3 +15,4 @@ jobs:
           node-version: "24"
       - run: node plugins/codex-forge/scripts/validate.mjs
       - run: bash -n plugins/codex-forge/scripts/diff-summary.sh
+      - run: node --test plugins/codex-forge/scripts/
