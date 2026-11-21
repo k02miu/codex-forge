@@ -57,8 +57,48 @@ codex plugin add codex-forge@codex-forge
 
 ## Development
 
+プラグインマニフェスト、Marketplace定義、4つのSkillを検証します。リポジトリのルートで実行します。
+
 ```bash
-node plugins/codex-forge/scripts/validate.mjs
+node plugins/codex-forge/scripts/validate.mjs          # 既定（人が読む出力）
+node plugins/codex-forge/scripts/validate.mjs --json   # 結果をJSONで出力
+node plugins/codex-forge/scripts/validate.mjs --help   # 使い方（-h も同じ）
 ```
+
+| 実行内容 | 標準出力 | 標準エラー | 終了コード |
+|---|---|---|---|
+| 既定・検証成功 | `OK: 4 skills, plugin manifest, marketplace, and references validated` の1行 | 空 | 0 |
+| 既定・検証失敗 | 空 | エラー1件につき `<ファイル>: <内容>` の1行 | 1 |
+| `--json`・検証成功 | JSON 1件 | 空 | 0 |
+| `--json`・検証失敗 | JSON 1件（`ok` が `false`） | 空 | 1 |
+| `--help` / `-h` | オプション、出力、終了コードの説明 | 空 | 0 |
+| 未知の引数（例 `--foo`） | 空 | `error: unknown option '--foo'` の1行 | 2 |
+
+既定モードの出力は従来と同じです。検証失敗時の例です。
+
+```text
+plugins/codex-forge/.codex-plugin/plugin.json: version must be semver
+plugins/codex-forge/skills/forge-ship/SKILL.md: missing
+```
+
+`--json` の出力は1行のJSONです（下は見やすく改行しています）。
+
+```json
+{
+  "ok": false,
+  "errors": [
+    { "file": "plugins/codex-forge/.codex-plugin/plugin.json", "message": "version must be semver" },
+    { "file": "plugins/codex-forge/skills/forge-ship/SKILL.md", "message": "missing" }
+  ],
+  "checked": { "skills": 3 }
+}
+```
+
+- `ok`: 検証エラーが無ければ `true`。成功時は `{"ok":true,"errors":[],"checked":{"skills":4}}` です
+- `errors[].file`: リポジトリのルートからの相対パス。実行するディレクトリには左右されません
+- `errors[].message`: 既定モードの標準エラーと同じ内容
+- `checked.skills`: `SKILL.md` が存在し、読み取れたSkillの数。内容に指摘があっても数えます
+
+引数は検証の前に確認します。未知の引数が1つでもあれば検証せずに終了コード2で終わり、`--help` / `-h` と併用しても未知の引数が優先されます。`--help` と `--json` を併用した場合はヘルプを表示して0で終わります。
 
 License: MIT
