@@ -25,7 +25,7 @@ const env = {
   GIT_COMMITTER_EMAIL: 'test@example.invalid',
   LC_ALL: 'C',
 }
-for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key]
+for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'LANGUAGE', 'LANG']) delete env[key]
 
 let counter = 0
 const tempDir = () => {
@@ -65,8 +65,47 @@ function addCommit(dir, file, content) {
 }
 
 const sectionHeaders = stdout => stdout.split('\n').filter(line => line.startsWith('## '))
-// A locale Git ships translations for ("Schwerwiegend: Kein Git-Repository ...").
-const TRANSLATED_LOCALE = { LC_ALL: 'de_DE.UTF-8', LANG: 'de_DE.UTF-8', LANGUAGE: 'de' }
+
+// Locale handling must not depend on locales installed on the host.
+// fakeTranslatedGitEnv() puts a git wrapper first on PATH that rewrites Git's
+// diagnostics as if translated whenever LC_ALL is not C, so the classification
+// is always exercised. A real installed locale with Git translations, when
+// one exists, is used in addition (the test is skipped otherwise).
+function fakeTranslatedGitEnv() {
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { env, encoding: 'utf8' }).stdout.trim()
+  assert.ok(realGit, 'git not found on PATH')
+  const bin = tempDir()
+  fs.writeFileSync(path.join(bin, 'git'), `#!/usr/bin/env bash
+{ err="$(${JSON.stringify(realGit)} "$@" 2>&1 1>&3 3>&-)"; status=$?; } 3>&1
+if [ -n "$err" ]; then
+  if [ "\${LC_ALL:-}" != C ]; then
+    err="$(printf '%s\\n' "$err" | sed -e 's/^fatal: not a git repository/Schwerwiegend: Kein Git-Repository/' \\
+      -e 's/^fatal: detected dubious ownership/Schwerwiegend: dubiose Besitzverhaeltnisse/' -e 's/^fatal: /Schwerwiegend: /')"
+  fi
+  printf '%s\\n' "$err" >&2
+fi
+exit "$status"
+`, { mode: 0o755 })
+  return { ...env, PATH: `${bin}${path.delimiter}${env.PATH}` }
+}
+
+function findTranslatedLocale() {
+  const outside = tempDir()
+  for (const name of ['de_DE.UTF-8', 'de_DE.utf8', 'fr_FR.UTF-8', 'fr_FR.utf8', 'es_ES.UTF-8', 'es_ES.utf8']) {
+    const locale = { LC_ALL: name, LANG: name, LANGUAGE: name.slice(0, 2) }
+    const shell = spawnSync('bash', ['-c', ':'], { env: { ...env, ...locale }, encoding: 'utf8' })
+    if (shell.status !== 0 || shell.stderr !== '') continue
+    const probe = spawnSync('git', ['rev-parse', '--git-dir'], { cwd: outside, env: { ...env, ...locale }, encoding: 'utf8' })
+    if (probe.status !== 0 && probe.stderr && !probe.stderr.startsWith('fatal: ')) return locale
+  }
+  return null
+}
+const TRANSLATED_LOCALE = findTranslatedLocale()
+const SKIP_NO_LOCALE = TRANSLATED_LOCALE ? false : 'no installed locale with Git translations'
+// Never installed anywhere; bash warns about it on glibc systems.
+const MISSING_LOCALE = { LC_ALL: 'xx_XX.UTF-8', LANG: 'xx_XX.UTF-8' }
+// Drop bash's own startup warning for an unusable locale; nothing else may remain.
+const withoutStartupWarning = text => text.split('\n').filter(line => !line.startsWith('bash: warning: setlocale: ')).join('\n')
 const SECTIONS = ['## base', '## merge-base', '## changed files', '## working tree', '## diffstat']
 
 test('missing base: one-line error on stderr, empty stdout, exit 1', () => {
@@ -219,29 +258,61 @@ test('regression: no work tree (bare repository, inside .git) exits 128 with git
   }
 })
 
+const runIn = (cwd, testEnv, ...args) => {
+  const result = spawnSync('bash', [script, ...args], { cwd, env: testEnv, encoding: 'utf8' })
+  return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
 test('git refusing the repository (dubious ownership) passes its diagnostic through', () => {
   const dir = makeRepo()
-  const ownerEnv = { ...env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }
-  for (const locale of [{}, TRANSLATED_LOCALE]) {
-    for (const args of [[], ['main']]) {
-      const result = spawnSync('bash', [script, ...args], { cwd: dir, env: { ...ownerEnv, ...locale }, encoding: 'utf8' })
-      const label = JSON.stringify({ args, locale })
-      assert.equal(result.stdout, '', label)
-      assert.equal(result.status, 128, label)
-      assert.match(result.stderr, /safe\.directory/, label)
-      assert.doesNotMatch(result.stderr, /error: not a git repository/, label)
-    }
+  for (const args of [[], ['main']]) {
+    const result = runIn(dir, { ...env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, ...args)
+    const label = JSON.stringify(args)
+    assert.equal(result.stdout, '', label)
+    assert.equal(result.code, 128, label)
+    assert.match(result.stderr, /^fatal: detected dubious ownership/m, label)
+    assert.match(result.stderr, /safe\.directory/, label)
+    assert.doesNotMatch(result.stderr, /error: not a git repository/, label)
   }
 })
 
-test('outside a git repository: same message under a non-C locale', () => {
-  const dir = tempDir()
-  const result = spawnSync('bash', [script], {
-    cwd: dir, env: { ...env, ...TRANSLATED_LOCALE }, encoding: 'utf8',
-  })
+test('translated Git diagnostics (simulated): fixed error outside a repository, original text otherwise', () => {
+  // An uninstalled locale keeps the real Git untranslated; only the wrapper translates.
+  const fakeEnv = { ...fakeTranslatedGitEnv(), ...MISSING_LOCALE }
+  const outside = runIn(tempDir(), fakeEnv)
   assert.deepEqual(
-    { code: result.status, stdout: result.stdout, stderr: result.stderr },
+    { ...outside, stderr: withoutStartupWarning(outside.stderr) },
     { code: 1, stdout: '', stderr: 'error: not a git repository\n' },
+  )
+  const owned = runIn(makeRepo(), { ...fakeEnv, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, 'main')
+  assert.equal(owned.code, 128)
+  assert.equal(owned.stdout, '')
+  assert.match(owned.stderr, /^Schwerwiegend: dubiose Besitzverhaeltnisse/m)
+  assert.doesNotMatch(owned.stderr, /error: not a git repository/)
+})
+
+test('translated Git diagnostics (installed locale): same behavior', { skip: SKIP_NO_LOCALE }, () => {
+  const localeEnv = { ...env, ...TRANSLATED_LOCALE }
+  assert.deepEqual(runIn(tempDir(), localeEnv), { code: 1, stdout: '', stderr: 'error: not a git repository\n' })
+  const owned = runIn(makeRepo(), { ...localeEnv, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, 'main')
+  assert.equal(owned.code, 128)
+  assert.equal(owned.stdout, '')
+  assert.match(owned.stderr, /safe\.directory/)
+  assert.doesNotMatch(owned.stderr, /^fatal: /m, 'diagnostic stays in the user locale')
+  assert.doesNotMatch(owned.stderr, /error: not a git repository/)
+})
+
+test('unusable locale: the script adds no locale warnings of its own', () => {
+  const missingEnv = { ...env, ...MISSING_LOCALE }
+  const outside = runIn(tempDir(), missingEnv)
+  assert.deepEqual(
+    { ...outside, stderr: withoutStartupWarning(outside.stderr) },
+    { code: 1, stdout: '', stderr: 'error: not a git repository\n' },
+  )
+  const missing = runIn(makeRepo(), missingEnv, 'not-found\nsecond-line')
+  assert.deepEqual(
+    { ...missing, stderr: withoutStartupWarning(missing.stderr) },
+    { code: 1, stdout: '', stderr: "error: base 'not-found\\nsecond-line' not found\n" },
   )
 })
 

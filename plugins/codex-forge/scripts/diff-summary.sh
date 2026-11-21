@@ -41,8 +41,11 @@ die() {
 }
 
 # Escape backslashes and control characters so a message stays on one line.
-escape() {
-  local LC_ALL=C s="$1" out='' c i
+# Runs in a subshell so switching to the C locale never touches the caller's
+# locale (restoring an unusable one would make bash print a warning).
+escape() (
+  LC_ALL=C
+  local s="$1" out='' c i
   for ((i = 0; i < ${#s}; i++)); do
     c="${s:i:1}"
     case "$c" in
@@ -55,7 +58,7 @@ escape() {
     esac
   done
   printf '%s' "$out"
-}
+)
 
 case "${1:-}" in
   -h | --help)
@@ -66,8 +69,9 @@ esac
 
 # Classify with untranslated messages; anything other than "not a git
 # repository" (e.g. dubious ownership) is re-run so Git's own diagnostic,
-# in the user's locale, reaches the user with Git's exit status.
-if ! repo_error="$(LC_ALL=C git rev-parse --git-dir 2>&1 >/dev/null)"; then
+# in the user's locale, reaches the user with Git's exit status. env(1) sets
+# the locale for Git only, so bash itself never switches locale here.
+if ! repo_error="$(env LC_ALL=C git rev-parse --git-dir 2>&1 >/dev/null)"; then
   case "$repo_error" in
     'fatal: not a git repository'*) die 'not a git repository' ;;
   esac
