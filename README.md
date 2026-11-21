@@ -68,13 +68,15 @@ node plugins/codex-forge/scripts/validate.mjs --help   # 使い方（-h も同�
 | 実行内容 | 標準出力 | 標準エラー | 終了コード |
 |---|---|---|---|
 | 既定・検証成功 | `OK: 4 skills, plugin manifest, marketplace, and references validated` の1行 | 空 | 0 |
-| 既定・検証失敗 | 空 | エラー1件につき `<ファイル>: <内容>` の1行 | 1 |
+| 既定・検証失敗 | 空 | 通常はエラー1件につき `<ファイル>: <内容>` の1行（※） | 1 |
 | `--json`・検証成功 | JSON 1件 | 空 | 0 |
 | `--json`・検証失敗 | JSON 1件（`ok` が `false`） | 空 | 1 |
 | `--help` / `-h` | オプション、出力、終了コードの説明 | 空 | 0 |
 | 未知の引数（例 `--foo`） | 空 | `error: unknown option '--foo'` の1行 | 2 |
 
-既定モードの出力は従来と同じです。検証失敗時の例です。
+※ JSONの構文エラーでは、Nodeのエラーメッセージに元から含まれる改行がそのまま表示され、1件が複数行になる場合があります。
+
+既定モードの検証失敗の例です。
 
 ```text
 plugins/codex-forge/.codex-plugin/plugin.json: version must be semver
