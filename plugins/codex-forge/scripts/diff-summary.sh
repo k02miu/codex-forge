@@ -30,8 +30,9 @@ Exit status:
        (one "error: ..." line on stderr); also when HEAD and base have
        no common ancestor (nothing is printed in that case)
   128  Git itself failed and its own diagnostic is shown on stderr, e.g.
-       no work tree (bare repository or inside .git) or a repository Git
-       refuses to use (dubious ownership; see git config safe.directory)
+       no work tree (bare repository or inside .git), a repository Git
+       refuses to use (dubious ownership; see git config safe.directory),
+       or GIT_DIR set to a path that is not a repository
 USAGE
 }
 
@@ -67,43 +68,52 @@ case "${1:-}" in
     ;;
 esac
 
-# Classify with untranslated messages; anything other than "not a git
-# repository" (e.g. dubious ownership) is re-run so Git's own diagnostic,
-# in the user's locale, reaches the user with Git's exit status. env(1) sets
-# the locale for Git only, so bash itself never switches locale here.
+# Classify with untranslated messages. Only a failed repository discovery
+# ("not a git repository (or any ...") gets the fixed error; anything else
+# (dubious ownership, a GIT_DIR that is not a repository: "not a git
+# repository: '<path>'", ...) is re-run so Git's own diagnostic, in the
+# user's locale, reaches the user with Git's exit status. env(1) sets the
+# locale for Git only, so bash itself never switches locale here.
 if ! repo_error="$(env LC_ALL=C git rev-parse --git-dir 2>&1 >/dev/null)"; then
   case "$repo_error" in
-    'fatal: not a git repository'*) die 'not a git repository' ;;
+    'fatal: not a git repository ('*) die 'not a git repository' ;;
   esac
   git rev-parse --git-dir >/dev/null
 fi
 
+# Sets base (shown in "## base") and base_rev (what merge-base uses).
+# For an explicit base, base_rev is the commit ID it was validated as, so
+# the expression is not re-resolved differently later (e.g. a trailing
+# newline in ":/<text>"). base is shown like before: as given, minus any
+# trailing newlines.
 resolve_base() {
   if [ -n "${1:-}" ]; then
-    local oid
+    local oid commit
     # A leading '-' would be parsed as an option, and no ref can start with one.
     case "$1" in -*) die "base '$(escape "$1")' not found" ;; esac
     # Resolve the expression as given first (so ":/<message>" is not
     # extended by "^{commit}"), then peel the object ID to a commit.
     if ! oid="$(git rev-parse --verify --quiet "$1" 2>/dev/null)" ||
-      ! git rev-parse --verify --quiet "$oid^{commit}" >/dev/null 2>&1; then
+      ! commit="$(git rev-parse --verify --quiet "$oid^{commit}" 2>/dev/null)"; then
       die "base '$(escape "$1")' not found"
     fi
-    printf '%s\n' "$1"
+    base="$(printf '%s' "$1")"
+    base_rev="$commit"
     return
   fi
   local candidate
   for candidate in origin/HEAD origin/main origin/master origin/develop; do
     if git rev-parse --verify --quiet "$candidate" >/dev/null; then
-      printf '%s\n' "$candidate"
+      base="$candidate"
+      base_rev="$candidate"
       return
     fi
   done
   die 'base branch not found; pass one explicitly'
 }
 
-base="$(resolve_base "${1:-}")"
-merge_base="$(git merge-base HEAD "$base")"
+resolve_base "${1:-}"
+merge_base="$(git merge-base HEAD "$base_rev")"
 name_status="$(git diff --name-status "$merge_base")"
 untracked="$(git status --short)"
 

@@ -25,7 +25,17 @@ const env = {
   GIT_COMMITTER_EMAIL: 'test@example.invalid',
   LC_ALL: 'C',
 }
-for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'LANGUAGE', 'LANG']) delete env[key]
+// Drop repository-local Git variables inherited from the parent (GIT_DIR,
+// GIT_COMMON_DIR, GIT_CONFIG_PARAMETERS, ...), as Git itself does for
+// subprocesses that switch repositories. Tests add the ones they need.
+const LOCAL_GIT_ENV = [
+  ...spawnSync('git', ['rev-parse', '--local-env-vars'], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean),
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+]
+for (const key of Object.keys(env)) {
+  if (LOCAL_GIT_ENV.includes(key) || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) delete env[key]
+}
+for (const key of ['LANGUAGE', 'LANG']) delete env[key]
 
 let counter = 0
 const tempDir = () => {
@@ -329,5 +339,51 @@ test('missing base with control characters is escaped onto one stderr line', () 
     const result = run(dir, base)
     assert.deepEqual(result, { code: 1, stdout: '', stderr: expected }, JSON.stringify(base))
     assert.equal(result.stderr.split('\n').length, 2, JSON.stringify(base))
+  }
+})
+
+test('test environment carries no repository-local Git variables from the parent', () => {
+  const leaked = Object.keys(env).filter(key => LOCAL_GIT_ENV.includes(key) || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
+  assert.deepEqual(leaked, [])
+})
+
+test('commit search with a trailing newline diffs against the commit it was validated as', () => {
+  // Distinct dates: ':/<text>' picks the youngest match, so ties would be ambiguous.
+  const commitAt = (dir, file, message, date) => {
+    fs.writeFileSync(path.join(dir, file), `${message}\n`)
+    git(dir, 'add', file)
+    const result = spawnSync('git', ['commit', '-q', '-m', message], {
+      cwd: dir, env: { ...env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }, encoding: 'utf8',
+    })
+    assert.equal(result.status, 0, result.stderr)
+  }
+  const dir = tempDir()
+  git(dir, 'init', '-q', '-b', 'main')
+  commitAt(dir, 'a.txt', 'initial', '2026-01-01T00:00:00Z')
+  const root = git(dir, 'rev-parse', 'HEAD')
+  git(dir, 'switch', '-q', '-c', 'feature')
+  commitAt(dir, 'b.txt', 'initial-later', '2026-01-02T00:00:00Z')
+  commitAt(dir, 'c.txt', 'feature', '2026-01-03T00:00:00Z')
+  assert.notEqual(git(dir, 'rev-parse', ':/initial'), root)
+  // ':/initial\n' only matches the root commit; ':/initial' would match 'initial-later'.
+  assert.equal(git(dir, 'rev-parse', ':/initial\n'), root)
+  const result = run(dir, ':/initial\n')
+  assert.equal(result.code, 0, result.stderr)
+  assert.equal(result.stderr, '')
+  assert.deepEqual(sectionHeaders(result.stdout), SECTIONS)
+  assert.ok(result.stdout.startsWith(`## base\n:/initial\n\n## merge-base\n${root}\n\n`), result.stdout)
+  assert.match(result.stdout, /## changed files\nA\tb\.txt\nA\tc\.txt\n\n/)
+})
+
+test('invalid GIT_DIR inside a work tree keeps Git\'s diagnostic with the path', () => {
+  const dir = makeRepo()
+  const notRepo = tempDir()
+  for (const gitDir of [path.join(sandbox, 'no-such-git-dir'), notRepo]) {
+    const result = runIn(dir, { ...env, GIT_DIR: gitDir }, 'main')
+    assert.equal(result.code, 128, gitDir)
+    assert.equal(result.stdout, '', gitDir)
+    assert.ok(result.stderr.startsWith('fatal: not a git repository: '), result.stderr)
+    assert.ok(result.stderr.includes(gitDir), result.stderr)
+    assert.doesNotMatch(result.stderr, /^error: /m, gitDir)
   }
 })
