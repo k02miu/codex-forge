@@ -60,15 +60,17 @@ function validate() {
 
   if (manifest) {
     if (manifest.name !== 'codex-forge') fail(manifestPath, 'name must be codex-forge')
-    let validVersion
+    // Convert the JSON value to a string first. Conversion can fail, e.g. TypeError for
+    // {"toString":null,"valueOf":null} or RangeError for a deeply nested array; treat that as invalid.
+    let version = null
     try {
-      validVersion = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(manifest.version ?? '')
-    } catch (error) {
-      // A JSON object such as {"toString":null,"valueOf":null} cannot be converted to a string.
-      if (!(error instanceof TypeError)) throw error
-      validVersion = false
+      version = String(manifest.version ?? '')
+    } catch {
+      version = null
     }
-    if (!validVersion) fail(manifestPath, 'version must be semver')
+    if (version === null || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+      fail(manifestPath, 'version must be semver')
+    }
     if (manifest.skills !== './skills/') fail(manifestPath, 'skills must point to ./skills/')
   }
 
