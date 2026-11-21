@@ -69,6 +69,11 @@ function validate() {
   if (marketplace) {
     const plugins = marketplace.plugins
     if (plugins !== undefined && !Array.isArray(plugins)) fail(marketplacePath, 'plugins must be an array')
+    if (Array.isArray(plugins)) {
+      plugins.forEach((item, index) => {
+        if (item === null) fail(marketplacePath, `plugins[${index}] must not be null`)
+      })
+    }
     const entry = Array.isArray(plugins) ? plugins.find(item => item?.name === 'codex-forge') : undefined
     if (!entry) fail(marketplacePath, 'codex-forge entry is missing')
     if (entry?.source?.path !== './plugins/codex-forge') {
