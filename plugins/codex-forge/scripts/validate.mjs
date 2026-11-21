@@ -32,11 +32,21 @@ function validate() {
   let checkedSkills = 0
 
   const fail = (file, message) => errors.push({ file: path.relative(repoRoot, file), message })
-  const read = file => fs.readFileSync(file, 'utf8')
+  // Report read failures (EACCES, EISDIR, ...) as validation errors on the file instead of throwing.
+  function read(file) {
+    try {
+      return fs.readFileSync(file, 'utf8')
+    } catch (error) {
+      fail(file, `cannot read file: ${error.code ?? error.message}`)
+      return null
+    }
+  }
 
   function json(file) {
+    const text = read(file)
+    if (text === null) return null
     try {
-      return JSON.parse(read(file))
+      return JSON.parse(text)
     } catch (error) {
       fail(file, `invalid JSON: ${error.message}`)
       return null
@@ -57,7 +67,9 @@ function validate() {
   }
 
   if (marketplace) {
-    const entry = marketplace.plugins?.find(item => item.name === 'codex-forge')
+    const plugins = marketplace.plugins
+    if (plugins !== undefined && !Array.isArray(plugins)) fail(marketplacePath, 'plugins must be an array')
+    const entry = Array.isArray(plugins) ? plugins.find(item => item?.name === 'codex-forge') : undefined
     if (!entry) fail(marketplacePath, 'codex-forge entry is missing')
     if (entry?.source?.path !== './plugins/codex-forge') {
       fail(marketplacePath, 'plugin source must be ./plugins/codex-forge')
@@ -75,9 +87,10 @@ function validate() {
       fail(skillPath, 'missing')
       continue
     }
-    checkedSkills++
     if (!fs.existsSync(agentPath)) fail(agentPath, 'missing')
     const content = read(skillPath)
+    if (content === null) continue
+    checkedSkills++
     if (!content.startsWith('---\n')) fail(skillPath, 'frontmatter is missing')
     if (!content.includes(`\nname: ${name}\n`)) fail(skillPath, 'frontmatter name does not match folder')
     if (!/\ndescription: .+\n---\n/.test(content)) fail(skillPath, 'description is missing')
@@ -93,6 +106,13 @@ function validate() {
   return { errors, checkedSkills }
 }
 
+// Keep diagnostics on one line: escape control and line-separator characters (LF, CR, NEL, U+2028/2029, ...).
+const escapeControl = text =>
+  text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ch => {
+    const named = { '\n': '\\n', '\r': '\\r', '\t': '\\t' }[ch]
+    return named ?? `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`
+  })
+
 function main(args) {
   let jsonOutput = false
   let showHelp = false
@@ -100,7 +120,7 @@ function main(args) {
     if (arg === '--json') jsonOutput = true
     else if (arg === '--help' || arg === '-h') showHelp = true
     else {
-      console.error(`error: unknown option '${arg}'`)
+      console.error(`error: unknown option '${escapeControl(arg)}'`)
       return 2
     }
   }
