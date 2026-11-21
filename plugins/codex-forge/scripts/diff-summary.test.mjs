@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Regression tests for diff-summary.sh. Run: node --test plugins/codex-forge/scripts/
+// Regression tests for diff-summary.sh.
+// Run: node --test plugins/codex-forge/scripts/diff-summary.test.mjs
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -64,6 +65,8 @@ function addCommit(dir, file, content) {
 }
 
 const sectionHeaders = stdout => stdout.split('\n').filter(line => line.startsWith('## '))
+// A locale Git ships translations for ("Schwerwiegend: Kein Git-Repository ...").
+const TRANSLATED_LOCALE = { LC_ALL: 'de_DE.UTF-8', LANG: 'de_DE.UTF-8', LANGUAGE: 'de' }
 const SECTIONS = ['## base', '## merge-base', '## changed files', '## working tree', '## diffstat']
 
 test('missing base: one-line error on stderr, empty stdout, exit 1', () => {
@@ -99,6 +102,10 @@ for (const flag of ['--help', '-h']) {
       assert.match(result.stdout, /^Exit status:$/m)
       assert.match(result.stdout, /^ {2}0\b/m)
       assert.match(result.stdout, /^ {2}1\b/m)
+      assert.match(result.stdout, /no common ancestor/)
+      assert.match(result.stdout, /^ {2}128\b/m)
+      assert.match(result.stdout, /work tree/)
+      assert.match(result.stdout, /dubious ownership/)
     }
   })
 }
@@ -172,5 +179,84 @@ test('base that looks like an option is reported as not found', () => {
   for (const base of ['--all', '-x']) {
     const result = run(dir, base)
     assert.deepEqual(result, { code: 1, stdout: '', stderr: `error: base '${base}' not found\n` })
+  }
+})
+
+test('regression: commit message search (:/<text>) is accepted as base', () => {
+  const dir = makeRepo()
+  const root = git(dir, 'rev-parse', 'HEAD')
+  addCommit(dir, 'b.txt', 'two\n')
+  for (const base of [':/initial', 'main^{/initial}']) {
+    const result = run(dir, base)
+    assert.equal(result.code, 0, `base ${base}: ${result.stderr}`)
+    assert.equal(result.stderr, '', `base ${base}`)
+    assert.ok(result.stdout.startsWith(`## base\n${base}\n\n## merge-base\n${root}\n\n`), `base ${base}`)
+    assert.deepEqual(sectionHeaders(result.stdout), SECTIONS, `base ${base}`)
+  }
+  const missing = run(dir, ':/no such message')
+  assert.deepEqual(missing, { code: 1, stdout: '', stderr: "error: base ':/no such message' not found\n" })
+})
+
+test('regression: no common ancestor exits 1 with no output (documented in --help)', () => {
+  const dir = makeRepo({ remote: false })
+  git(dir, 'switch', '-q', '--orphan', 'other')
+  fs.writeFileSync(path.join(dir, 'c.txt'), 'other\n')
+  git(dir, 'add', 'c.txt')
+  git(dir, 'commit', '-q', '-m', 'unrelated')
+  assert.deepEqual(run(dir, 'main'), { code: 1, stdout: '', stderr: '' })
+})
+
+test('regression: no work tree (bare repository, inside .git) exits 128 with git diagnostic', () => {
+  const work = makeRepo()
+  const bare = path.join(tempDir(), 'bare.git')
+  git(work, 'clone', '-q', '--bare', work, bare)
+  for (const dir of [bare, path.join(work, '.git')]) {
+    const result = run(dir, 'main')
+    assert.equal(result.code, 128, dir)
+    assert.equal(result.stdout, '', dir)
+    assert.match(result.stderr, /^fatal: .*work tree/m, dir)
+    assert.doesNotMatch(result.stderr, /^error: /m, dir)
+  }
+})
+
+test('git refusing the repository (dubious ownership) passes its diagnostic through', () => {
+  const dir = makeRepo()
+  const ownerEnv = { ...env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }
+  for (const locale of [{}, TRANSLATED_LOCALE]) {
+    for (const args of [[], ['main']]) {
+      const result = spawnSync('bash', [script, ...args], { cwd: dir, env: { ...ownerEnv, ...locale }, encoding: 'utf8' })
+      const label = JSON.stringify({ args, locale })
+      assert.equal(result.stdout, '', label)
+      assert.equal(result.status, 128, label)
+      assert.match(result.stderr, /safe\.directory/, label)
+      assert.doesNotMatch(result.stderr, /error: not a git repository/, label)
+    }
+  }
+})
+
+test('outside a git repository: same message under a non-C locale', () => {
+  const dir = tempDir()
+  const result = spawnSync('bash', [script], {
+    cwd: dir, env: { ...env, ...TRANSLATED_LOCALE }, encoding: 'utf8',
+  })
+  assert.deepEqual(
+    { code: result.status, stdout: result.stdout, stderr: result.stderr },
+    { code: 1, stdout: '', stderr: 'error: not a git repository\n' },
+  )
+})
+
+test('missing base with control characters is escaped onto one stderr line', () => {
+  const dir = makeRepo()
+  const cases = [
+    ['not-found\nsecond-line', "error: base 'not-found\\nsecond-line' not found\n"],
+    ['cr\rtab\tend', "error: base 'cr\\rtab\\tend' not found\n"],
+    ['esc\x1b[31m', "error: base 'esc\\x1B[31m' not found\n"],
+    ['back\\slash\nx', "error: base 'back\\\\slash\\nx' not found\n"],
+    ['日本語-branch', "error: base '日本語-branch' not found\n"],
+  ]
+  for (const [base, expected] of cases) {
+    const result = run(dir, base)
+    assert.deepEqual(result, { code: 1, stdout: '', stderr: expected }, JSON.stringify(base))
+    assert.equal(result.stderr.split('\n').length, 2, JSON.stringify(base))
   }
 })
